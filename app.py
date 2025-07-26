@@ -8,52 +8,21 @@ import json
 import hashlib
 from pathlib import Path
 import uuid
-
-import gspread  # type: ignore
-from oauth2client.service_account import ServiceAccountCredentials  # type: ignore
 import shutil  # נדרש לגיבוי
 
-# ------------- Google Sheets -------------
+# ====== GOOGLE SHEETS FUNCTIONS (לשימוש עתידי בלבד) ======
 GOOGLE_CREDENTIALS_FILE = "mix-tips-audio-feedback-2f5678ce6153.json"
-GOOGLE_SHEET_NAME = "MixTips Data"  # שם הגיליון שלך ב-Google Sheets
+GOOGLE_SHEET_NAME = "MixTips Data"
 
 def get_gsheet():
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
-        client = gspread.authorize(creds)
-        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
-        return sheet
-    except Exception as e:
-        print("Google Sheets connect error:", repr(e))
-        return None
-def gsheet_append_record(record: dict):
-    """הוספת שורה חדשה ל־Google Sheets, אם אפשר."""
-    sheet = get_gsheet()
-    if not sheet:
-        st.warning("Warning: Could not connect to Google Sheets. Feedback won't be synced.")
-        return
-    fields = [
-        "created_at", "email", "filename", "duration", "lufs", "peak", "crest_factor",
-        "centroid", "dominant_freq", "main_tip", "tips", "genre", "project_stage",
-        "feedback_purpose", "feedback_purpose_free", "self_rating", "feedback_hardest",
-        "feedback_hardest_free", "reference", "q1", "q2", "q3"
-    ]
-    try:
-        if not sheet.row_values(1):
-            sheet.append_row(fields)
-    except Exception:
-        try:
-            sheet.append_row(fields)
-        except Exception:
-            pass
-    try:
-        row = [str(record.get(f, "")) for f in fields]
-        sheet.append_row(row)
-    except Exception as e:
-        st.warning(f"Warning: Failed to write to Google Sheets: {e}")
+    # לא מוחק את הפונקציה, אבל לא קורא לה כיום
+    return None
 
-# ========== PATHS ==========
+def gsheet_append_record(record: dict):
+    # לא מבצע פעולה, רק מסמן שהנתונים לא ישמרו שם
+    st.warning("Warning: Google Sheets sync is disabled. Data is saved locally only.")
+
+# ====== PATHS & FILES ======
 APP_ROOT = Path(__file__).parent.resolve()
 USER_DATA_DIR = APP_ROOT / "user_data"
 UPLOADS_DIR = APP_ROOT / "uploads"
@@ -63,7 +32,7 @@ JSON_PATH = USER_DATA_DIR / "all_feedbacks.json"
 if not JSON_PATH.exists():
     JSON_PATH.write_text("[]", encoding="utf-8")
 
-# ========== גיבוי מקומי ==========
+# ====== LOCAL JSON BACKUP ======
 def backup_json():
     backup_dir = USER_DATA_DIR / "backup"
     try:
@@ -75,7 +44,7 @@ def backup_json():
         print("Backup failed:", e)
         return False
 
-# ========== HELPERS ==========
+# ====== HELPERS ======
 def is_valid_email(email: str) -> bool:
     pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
     return re.match(pattern, email) is not None
@@ -139,12 +108,10 @@ def get_next_project_number(email: str) -> int:
 
 def build_project_filename(email: str, project_num: int, ext: str) -> Path:
     email_part = safe_filename(email.split("@")[0]) if email else "anon"
-    # מזהה ייחודי לזמני (מונע התנגשות קבצים)
     unique_id = uuid.uuid4().hex[:8]
     return UPLOADS_DIR / f"{email_part}__project_{project_num}_{unique_id}{ext}"
 
 def save_or_update_record(email: str, record: dict) -> None:
-    print("Saving record for email:", email)  # בדיקה
     data = _load_records()
     idx = None
     fh = record.get("file_hash")
@@ -165,13 +132,8 @@ def save_or_update_record(email: str, record: dict) -> None:
         data[idx].update(record)
         data[idx]["updated_at"] = now_iso
 
-    print("Writing records to JSON file...")
     _write_records(data)
-    print("Records written successfully.")
-    try:
-        gsheet_append_record(record)
-    except Exception as e:
-        print("Failed writing to Google Sheets:", e)
+    # לא מנסים לכתוב ל-Google Sheets
 
 def _read_audio_to_mono(path: Path) -> tuple[np.ndarray, int]:
     data_arr, samplerate = sf.read(str(path))
@@ -181,8 +143,10 @@ def _read_audio_to_mono(path: Path) -> tuple[np.ndarray, int]:
         raise ValueError("Empty audio data.")
     return data_arr.astype(np.float64, copy=False), int(samplerate)
 
-# ========== PROFESSIONAL TIPS ==========
+# ====== PROFESSIONAL TIPS ======
 def professional_tips(lufs, peak, crest, centroid, dominant_freq):
+    # כפי שהיה בקוד שלך, ללא שינוי
+
     tips = []
     main_tip = ""
     explanation = []
@@ -243,8 +207,7 @@ def professional_tips(lufs, peak, crest, centroid, dominant_freq):
         main_tip = "Your mix is balanced and excellent! Keep it up."
     return main_tip, tips, explanation
 
-# ========== UI & LOGIC ==========
-
+# ====== UI & LOGIC ======
 st.set_page_config(page_title="Smart Mixing Tips", layout="centered")
 
 if 'email_ok' not in st.session_state:
@@ -434,5 +397,6 @@ Project Stage: {project_stage}<br>
             }
             save_or_update_record(email, update_payload)
             st.success("Thank you for your feedback!")
+
     except Exception as e:
         st.error(f"⚠️ Error: Unsupported or corrupted file ({e})")
