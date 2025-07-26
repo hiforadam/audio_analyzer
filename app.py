@@ -65,7 +65,7 @@ if not JSON_PATH.exists():
 
 # ========== גיבוי מקומי (חדש) ==========
 def backup_json():
-    backup_dir = APP_ROOT / "backup"
+    backup_dir = USER_DATA_DIR / "backup"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / JSON_PATH.name
     try:
@@ -427,7 +427,7 @@ Project Stage: {project_stage}<br>
                 'q3': q3,
             }
             save_or_update_record(email, update_payload)
-            st.success("Thank you for your feedback! (Record updated, not duplicated).")
+            st.success("Thank you for your feedback!")
 
     except Exception as e:
         st.error(f"⚠️ Error: Unsupported or corrupted file ({e})")        
