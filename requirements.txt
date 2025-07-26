@@ -1,3 +1,6 @@
 streamlit
 soundfile
 numpy
+scipy
+gspread
+oauth2client
