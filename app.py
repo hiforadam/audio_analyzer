@@ -7,10 +7,11 @@ import re
 import json
 import hashlib
 from pathlib import Path
+import uuid
 
 import gspread  # type: ignore
 from oauth2client.service_account import ServiceAccountCredentials  # type: ignore
-import shutil  # <--- נדרש לגיבוי
+import shutil  # נדרש לגיבוי
 
 # ------------- Google Sheets -------------
 GOOGLE_CREDENTIALS_FILE = "mix-tips-audio-feedback-2f5678ce6153.json"
@@ -32,15 +33,14 @@ def gsheet_append_record(record: dict):
     """הוספת שורה חדשה ל־Google Sheets, אם אפשר."""
     sheet = get_gsheet()
     if not sheet:
+        st.warning("Warning: Could not connect to Google Sheets. Feedback won't be synced.")
         return
-    # התאמה לשדות עיקריים בלבד
     fields = [
         "created_at", "email", "filename", "duration", "lufs", "peak", "crest_factor",
         "centroid", "dominant_freq", "main_tip", "tips", "genre", "project_stage",
         "feedback_purpose", "feedback_purpose_free", "self_rating", "feedback_hardest",
         "feedback_hardest_free", "reference", "q1", "q2", "q3"
     ]
-    # בדיקה אם header קיים
     try:
         if not sheet.row_values(1):
             sheet.append_row(fields)
@@ -49,9 +49,11 @@ def gsheet_append_record(record: dict):
             sheet.append_row(fields)
         except Exception:
             pass
-    # הכנת ערכים
-    row = [str(record.get(f, "")) for f in fields]
-    sheet.append_row(row)
+    try:
+        row = [str(record.get(f, "")) for f in fields]
+        sheet.append_row(row)
+    except Exception as e:
+        st.warning(f"Warning: Failed to write to Google Sheets: {e}")
 
 # ========== PATHS ==========
 APP_ROOT = Path(__file__).parent.resolve()
@@ -63,19 +65,19 @@ JSON_PATH = USER_DATA_DIR / "all_feedbacks.json"
 if not JSON_PATH.exists():
     JSON_PATH.write_text("[]", encoding="utf-8")
 
-# ========== גיבוי מקומי (חדש) ==========
+# ========== גיבוי מקומי ==========
 def backup_json():
     backup_dir = USER_DATA_DIR / "backup"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    backup_path = backup_dir / JSON_PATH.name
     try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / JSON_PATH.name
         shutil.copy(str(JSON_PATH), str(backup_path))
         return True
     except Exception as e:
         print("Backup failed:", e)
         return False
-# ========== HELPERS ==========
 
+# ========== HELPERS ==========
 def is_valid_email(email: str) -> bool:
     pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
     return re.match(pattern, email) is not None
@@ -102,7 +104,7 @@ def _atomic_write_records(data: list) -> None:
 
 def _write_records(data: list) -> None:
     _atomic_write_records(data)
-    backup_json()  # גיבוי אוטומטי בכל שמירה!
+    backup_json()
 
 def compute_file_hash(file_path: Path) -> str:
     h = hashlib.sha1()
@@ -139,7 +141,9 @@ def get_next_project_number(email: str) -> int:
 
 def build_project_filename(email: str, project_num: int, ext: str) -> Path:
     email_part = safe_filename(email.split("@")[0]) if email else "anon"
-    return UPLOADS_DIR / f"{email_part}__project_{project_num}{ext}"
+    # מזהה ייחודי לזמני (מונע התנגשות קבצים)
+    unique_id = uuid.uuid4().hex[:8]
+    return UPLOADS_DIR / f"{email_part}__project_{project_num}_{unique_id}{ext}"
 
 def save_or_update_record(email: str, record: dict) -> None:
     data = _load_records()
@@ -163,7 +167,6 @@ def save_or_update_record(email: str, record: dict) -> None:
         data[idx]["updated_at"] = now_iso
 
     _write_records(data)
-    # נסה להוסיף ל־Google Sheets
     try:
         gsheet_append_record(record)
     except Exception as e:
@@ -287,7 +290,8 @@ if uploaded_file:
         email = st.session_state.get('user_email', 'anon')
         ext = Path(uploaded_file.name).suffix.lower()
 
-        tmp = UPLOADS_DIR / f"__tmp{ext}"
+        # יצירת שם זמני ייחודי למניעת התנגשות קבצים
+        tmp = UPLOADS_DIR / f"__tmp_{uuid.uuid4().hex[:8]}{ext}"
         with open(tmp, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
@@ -307,6 +311,7 @@ if uploaded_file:
             final_path = build_project_filename(email, n, ext)
 
         os.replace(tmp, final_path)
+
         data_arr, samplerate = _read_audio_to_mono(final_path)
         duration = len(data_arr) / samplerate
         eps = 1e-12
@@ -428,6 +433,5 @@ Project Stage: {project_stage}<br>
             }
             save_or_update_record(email, update_payload)
             st.success("Thank you for your feedback!")
-
     except Exception as e:
-        st.error(f"⚠️ Error: Unsupported or corrupted file ({e})")        
+        st.error(f"⚠️ Error: Unsupported or corrupted file ({e})")
