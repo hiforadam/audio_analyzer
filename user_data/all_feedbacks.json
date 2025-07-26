@@ -1,0 +1,24 @@
+[
+  {
+    "email": "hiforadam@gmail.com",
+    "created_at": "2025-07-27T01:20:59.964408",
+    "updated_at": "2025-07-27T01:20:59.964408"
+  },
+  {
+    "email": "hiforadam@gmail.com",
+    "file_hash": "b5441b64a4",
+    "filename": "hiforadam__project_1.mp3",
+    "duration": 131.136,
+    "lufs": -14.24401502269161,
+    "peak": 1.1503719091415405,
+    "crest_factor": 5.929785984934241,
+    "centroid": 6307.213034603138,
+    "dominant_freq": 47.24865788189361,
+    "main_tip": "High peak – risk of clipping/distortion.",
+    "tips": "Average loudness is normal (-14.24 LUFS) – great!; High peak value (1.15). Recommended to lower to -0.5dBFS to avoid clipping or distortion.; Crest Factor is within normal range (5.93).; Bass dominant frequency (47.2Hz). Check for muddy build-up in 20–80Hz range.; High spectral centroid (6307.2Hz). High-end is dominant – consider EQ adjustments.",
+    "genre": "",
+    "project_stage": "דמו",
+    "created_at": "2025-07-27T01:21:25.236654",
+    "updated_at": "2025-07-27T01:21:25.236654"
+  }
+]
