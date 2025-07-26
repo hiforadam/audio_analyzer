@@ -18,7 +18,6 @@ GOOGLE_CREDENTIALS_FILE = "mix-tips-audio-feedback-2f5678ce6153.json"
 GOOGLE_SHEET_NAME = "MixTips Data"  # שם הגיליון שלך ב-Google Sheets
 
 def get_gsheet():
-    """טעינת Google Sheet לאוטומציה מהירה. הגנה מובנית."""
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
@@ -26,9 +25,8 @@ def get_gsheet():
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         return sheet
     except Exception as e:
-        print("Google Sheets connect error:", e)
+        print("Google Sheets connect error:", repr(e))
         return None
-
 def gsheet_append_record(record: dict):
     """הוספת שורה חדשה ל־Google Sheets, אם אפשר."""
     sheet = get_gsheet()
@@ -146,6 +144,7 @@ def build_project_filename(email: str, project_num: int, ext: str) -> Path:
     return UPLOADS_DIR / f"{email_part}__project_{project_num}_{unique_id}{ext}"
 
 def save_or_update_record(email: str, record: dict) -> None:
+    print("Saving record for email:", email)  # בדיקה
     data = _load_records()
     idx = None
     fh = record.get("file_hash")
@@ -166,7 +165,9 @@ def save_or_update_record(email: str, record: dict) -> None:
         data[idx].update(record)
         data[idx]["updated_at"] = now_iso
 
+    print("Writing records to JSON file...")
     _write_records(data)
+    print("Records written successfully.")
     try:
         gsheet_append_record(record)
     except Exception as e:
