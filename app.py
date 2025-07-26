@@ -65,8 +65,7 @@ if not JSON_PATH.exists():
 
 # ========== גיבוי מקומי (חדש) ==========
 def backup_json():
-    backup_dir = "/Users/isabellayaroslavskygmail.com/Documents/audio_analyzer_backup"
-    backup_dir = Path(backup_dir)
+    backup_dir = APP_ROOT / "backup"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / JSON_PATH.name
     try:
@@ -75,7 +74,6 @@ def backup_json():
     except Exception as e:
         print("Backup failed:", e)
         return False
-
 # ========== HELPERS ==========
 
 def is_valid_email(email: str) -> bool:
