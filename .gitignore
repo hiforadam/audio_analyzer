@@ -1,22 +1,26 @@
-# OS
-.DS_Store
-
-# Python / venv
+# Python cache
 __pycache__/
 *.py[cod]
+
+# Virtual environment folders
 venv/
 .venv/
 env/
 
-# Streamlit secrets (לא לדחוף לריפו)
+# Streamlit secrets (אסור לדחוף לריפו)
 .streamlit/secrets.toml
 
-# נתוני ריצה/קבצי אודיו
+# Data / uploads
 uploads/
 feedbacks/
 user_data/
+
+# Audio files
 *.wav
 *.mp3
 *.aif
 *.aiff
 *.flac
+
+# macOS system files
+.DS_Store
