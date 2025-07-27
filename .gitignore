@@ -15,3 +15,4 @@ user_data/
 *.flac
 .DS_Store
 
+.streamlit/secrets.toml

@@ -2,4 +2,3 @@ streamlit
 soundfile
 numpy
 supabase
---upgrade pip
