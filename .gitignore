@@ -153,3 +153,5 @@ Library/
 .zshrc-temp100
 
 # Ignore any other personal or irrelevant folders/files here
+uploads/
+feedbacks/
