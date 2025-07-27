@@ -230,7 +230,9 @@ if not st.session_state['email_ok']:
 email = st.session_state.get('user_email', 'anon')
 uploaded_file = st.file_uploader("Upload audio file (WAV/MP3)", type=["wav", "mp3"])
 genre = st.text_input("Genre (optional, e.g., Pop, Rock, Trap, Techno, etc.)")
-project_stage = st.selectbox("שלב הפרויקט:", ["דמו", "מיקס", "מאסטר", "בדיקת רפרנס", "סופי", "אחר"])
+project_stage = st.selectbox("Project Stage:", [
+    "Demo", "Mix", "Master", "Reference Check", "Final", "Other"
+])
 
 # הצג היסטוריה של כל הפרויקטים/פידבקים (כולל לינק קובץ)
 if st.button("Show my full project history"):
