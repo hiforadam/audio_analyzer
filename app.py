@@ -4,47 +4,47 @@ import numpy as np  # type: ignore
 from datetime import datetime
 import os
 import re
-import json
 import hashlib
 from pathlib import Path
 import uuid
-import shutil  # נדרש לגיבוי
+from supabase import create_client, Client  # type: ignore
 
-# ====== GOOGLE SHEETS FUNCTIONS (לשימוש עתידי בלבד) ======
-GOOGLE_CREDENTIALS_FILE = "mix-tips-audio-feedback-2f5678ce6153.json"
-GOOGLE_SHEET_NAME = "MixTips Data"
+# ========== Supabase ==========
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "feedbacks"
+BUCKET_NAME = "audio-uploads"
 
-def get_gsheet():
-    # לא מוחק את הפונקציה, אבל לא קורא לה כיום
-    return None
-
-def gsheet_append_record(record: dict):
-    # לא מבצע פעולה, רק מסמן שהנתונים לא ישמרו שם
-    st.warning("Warning: Google Sheets sync is disabled. Data is saved locally only.")
-
-# ====== PATHS & FILES ======
 APP_ROOT = Path(__file__).parent.resolve()
-USER_DATA_DIR = APP_ROOT / "user_data"
 UPLOADS_DIR = APP_ROOT / "uploads"
-USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-JSON_PATH = USER_DATA_DIR / "all_feedbacks.json"
-if not JSON_PATH.exists():
-    JSON_PATH.write_text("[]", encoding="utf-8")
 
-# ====== LOCAL JSON BACKUP ======
-def backup_json():
-    backup_dir = USER_DATA_DIR / "backup"
-    try:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_path = backup_dir / JSON_PATH.name
-        shutil.copy(str(JSON_PATH), str(backup_path))
-        return True
-    except Exception as e:
-        print("Backup failed:", e)
-        return False
+# ======= HELPERS & ERROR HANDLING =========
 
-# ====== HELPERS ======
+def clean_record_for_supabase(record: dict) -> dict:
+    # Supabase לא אוהב None – ננקה את כל המפתחות
+    for k, v in list(record.items()):
+        if v is None:
+            record[k] = ""
+        elif not isinstance(v, (str, int, float)):
+            record[k] = str(v)
+    return record
+
+def safe_supabase(func):
+    """Decorator to catch and report Supabase errors."""
+    def wrapper(*args, **kwargs):
+        try:
+            res = func(*args, **kwargs)
+            if hasattr(res, 'error') and res.error:
+                st.error(f"Database error: {res.error.message if hasattr(res.error, 'message') else res.error}")
+                return None
+            return res
+        except Exception as e:
+            st.error(f"Supabase error: {e}")
+            return None
+    return wrapper
+
 def is_valid_email(email: str) -> bool:
     pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
     return re.match(pattern, email) is not None
@@ -52,26 +52,6 @@ def is_valid_email(email: str) -> bool:
 def safe_filename(s: str) -> str:
     s = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', s)
     return s[:64]
-
-def _load_records() -> list:
-    try:
-        if JSON_PATH.exists() and JSON_PATH.stat().st_size > 0:
-            with JSON_PATH.open('r', encoding='utf-8') as f:
-                data = json.load(f)
-            return data if isinstance(data, list) else []
-    except Exception:
-        return []
-    return []
-
-def _atomic_write_records(data: list) -> None:
-    tmp_path = JSON_PATH.with_suffix(".tmp.json")
-    with tmp_path.open('w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, JSON_PATH)
-
-def _write_records(data: list) -> None:
-    _atomic_write_records(data)
-    backup_json()
 
 def compute_file_hash(file_path: Path) -> str:
     h = hashlib.sha1()
@@ -83,27 +63,35 @@ def compute_file_hash(file_path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()[:10]
 
-def find_record_index(email: str, file_hash: str) -> int | None:
-    data = _load_records()
-    for i, rec in enumerate(data):
-        if rec.get("email") == email and rec.get("file_hash") == file_hash:
-            return i
+@safe_supabase
+def find_record(email: str, file_hash: str):
+    res = supabase.table(TABLE_NAME).select("*").eq("email", email).eq("file_hash", file_hash).execute()
+    if res and res.data and len(res.data) > 0:
+        return res.data[0]
     return None
 
+@safe_supabase
+def get_user_feedbacks(email: str):
+    res = supabase.table(TABLE_NAME).select("*").eq("email", email).order("created_at", desc=True).execute()
+    if res and res.data:
+        return res.data
+    return []
+
+@safe_supabase
 def get_next_project_number(email: str) -> int:
-    data = _load_records()
+    res = supabase.table(TABLE_NAME).select("filename").eq("email", email).execute()
     max_n = 0
-    for rec in data:
-        if rec.get("email") == email:
-            fname = rec.get("filename", "")
-            m = re.search(r'__project_(\d+)\.', fname)
-            if m:
-                try:
-                    n = int(m.group(1))
-                    if n > max_n:
-                        max_n = n
-                except ValueError:
-                    continue
+    for rec in (res.data or []):
+        # תיקון NoneType:
+        fname = rec.get("filename") or ""
+        m = re.search(r'__project_(\d+)', fname)
+        if m:
+            try:
+                n = int(m.group(1))
+                if n > max_n:
+                    max_n = n
+            except ValueError:
+                continue
     return max_n + 1
 
 def build_project_filename(email: str, project_num: int, ext: str) -> Path:
@@ -111,31 +99,22 @@ def build_project_filename(email: str, project_num: int, ext: str) -> Path:
     unique_id = uuid.uuid4().hex[:8]
     return UPLOADS_DIR / f"{email_part}__project_{project_num}_{unique_id}{ext}"
 
+@safe_supabase
 def save_or_update_record(email: str, record: dict) -> None:
-    data = _load_records()
-    idx = None
+    record = clean_record_for_supabase(record)  # נקיון לפני כל שמירה!
     fh = record.get("file_hash")
-
-    if fh:
-        for i, rec in enumerate(data):
-            if rec.get("email") == email and rec.get("file_hash") == fh:
-                idx = i
-                break
-
     now_iso = datetime.now().isoformat()
-    if idx is None:
+    exists = find_record(email, fh) if fh else None
+    if exists:
+        record["updated_at"] = now_iso
+        supabase.table(TABLE_NAME).update(record).eq("email", email).eq("file_hash", fh).execute()
+    else:
         record.setdefault("email", email)
         record["created_at"] = now_iso
         record["updated_at"] = now_iso
-        data.append(record)
-    else:
-        data[idx].update(record)
-        data[idx]["updated_at"] = now_iso
+        supabase.table(TABLE_NAME).insert(record).execute()
 
-    _write_records(data)
-    # לא מנסים לכתוב ל-Google Sheets
-
-def _read_audio_to_mono(path: Path) -> tuple[np.ndarray, int]:
+def _read_audio_to_mono(path: Path):
     data_arr, samplerate = sf.read(str(path))
     if data_arr.ndim > 1:
         data_arr = np.mean(data_arr, axis=1)
@@ -143,14 +122,24 @@ def _read_audio_to_mono(path: Path) -> tuple[np.ndarray, int]:
         raise ValueError("Empty audio data.")
     return data_arr.astype(np.float64, copy=False), int(samplerate)
 
-# ====== PROFESSIONAL TIPS ======
-def professional_tips(lufs, peak, crest, centroid, dominant_freq):
-    # כפי שהיה בקוד שלך, ללא שינוי
+# --- העלאת קובץ ל-Supabase Storage והחזרת URL ---
+def upload_to_supabase_storage(local_path: Path, remote_path: str) -> str:
+    # תיקון: storage הוא מאפיין, לא פונקציה; אין פרמטר upsert ל-upload
+    with open(local_path, "rb") as f:
+        supabase.storage.from_(BUCKET_NAME).upload(path=remote_path, file=f)
+    url_res = supabase.storage.from_(BUCKET_NAME).get_public_url(remote_path)
+    # החזרת מחרוזת URL
+    if isinstance(url_res, dict) and "publicUrl" in url_res:
+        return url_res["publicUrl"]
+    elif isinstance(url_res, str):
+        return url_res
+    return ""
 
+# ====== TIPS FUNCTION (כמו קודם) ======
+def professional_tips(lufs, peak, crest, centroid, dominant_freq):
     tips = []
     main_tip = ""
     explanation = []
-
     if lufs > -11.5:
         tips.append(f"High loudness ({lufs:.2f} LUFS). It's recommended to reduce master volume/limiter to about -13~-14 LUFS to avoid distortion and automatic volume reduction on streaming platforms.")
         main_tip = "Loudness is too high – possible distortion/volume reduction."
@@ -162,7 +151,6 @@ def professional_tips(lufs, peak, crest, centroid, dominant_freq):
     else:
         tips.append(f"Average loudness is normal ({lufs:.2f} LUFS) – great!")
         explanation.append("Loudness is within normal range, but make sure other parameters are good too.")
-
     if peak > 0.98:
         tips.append(f"High peak value ({peak:.2f}). Recommended to lower to -0.5dBFS to avoid clipping or distortion.")
         if not main_tip:
@@ -173,7 +161,6 @@ def professional_tips(lufs, peak, crest, centroid, dominant_freq):
         explanation.append("Low peak means mix isn't utilizing full dynamic range – master gain can be raised.")
     else:
         tips.append(f"Peak level is within a healthy range ({peak:.2f}).")
-
     if crest < 3:
         tips.append(f"Low Crest Factor ({crest:.2f}). Mix is too compressed – try reducing compression/limiter.")
         if not main_tip:
@@ -184,7 +171,6 @@ def professional_tips(lufs, peak, crest, centroid, dominant_freq):
         explanation.append("High Crest Factor is typical for classical or soundtrack music; if not, mix might be too soft.")
     else:
         tips.append(f"Crest Factor is within normal range ({crest:.2f}).")
-
     if dominant_freq < 80:
         tips.append(f"Bass dominant frequency ({dominant_freq:.1f}Hz). Check for muddy build-up in 20–80Hz range.")
         explanation.append("Very low dominant frequency suggests bass is overpowering. Use headphones and EQ to check.")
@@ -193,7 +179,6 @@ def professional_tips(lufs, peak, crest, centroid, dominant_freq):
         explanation.append("High dominant frequency can cause harshness and listener fatigue. Balance highs and lows.")
     else:
         tips.append(f"Dominant frequency is within a healthy range ({dominant_freq:.1f}Hz).")
-
     if centroid < 1400:
         tips.append(f"Low spectral centroid ({centroid:.1f}Hz). Consider adding brightness (EQ around 2kHz-7kHz).")
         explanation.append("Low centroid results in a 'dark' mix; sometimes a bit of brightness is desired for modern sound.")
@@ -202,7 +187,6 @@ def professional_tips(lufs, peak, crest, centroid, dominant_freq):
         explanation.append("Too high centroid makes mix sound 'sharp' or 'thin', which can be unpleasant for long listening.")
     else:
         tips.append(f"Spectral centroid is balanced ({centroid:.1f}Hz).")
-
     if not main_tip:
         main_tip = "Your mix is balanced and excellent! Keep it up."
     return main_tip, tips, explanation
@@ -236,47 +220,54 @@ if not st.session_state['email_ok']:
         if is_valid_email(email):
             st.session_state['email_ok'] = True
             st.session_state['user_email'] = email
-            save_or_update_record(email, {"email": email})
+            save_or_update_record(email, clean_record_for_supabase({"email": email}))
             st.success("Email received – you may continue!")
         else:
             st.error("Please enter a valid email address.")
     if not st.session_state['email_ok']:
         st.stop()
 
+email = st.session_state.get('user_email', 'anon')
 uploaded_file = st.file_uploader("Upload audio file (WAV/MP3)", type=["wav", "mp3"])
 genre = st.text_input("Genre (optional, e.g., Pop, Rock, Trap, Techno, etc.)")
 project_stage = st.selectbox("שלב הפרויקט:", ["דמו", "מיקס", "מאסטר", "בדיקת רפרנס", "סופי", "אחר"])
+
+# הצג היסטוריה של כל הפרויקטים/פידבקים (כולל לינק קובץ)
+if st.button("Show my full project history"):
+    feedbacks = get_user_feedbacks(email)
+    if feedbacks:
+        st.markdown("#### Your Mix/Project History:")
+        for f in feedbacks:
+            link = f.get('file_url', '')
+            if link:
+                st.markdown(f"- **[{f.get('filename','unknown')}]({link})**: {f.get('created_at','?')} | LUFS: {f.get('lufs', '?'):.2f}, Peak: {f.get('peak', '?'):.2f}, [Stage: {f.get('project_stage', '?')}]")
+            else:
+                st.markdown(f"- **{f.get('filename','unknown')}**: {f.get('created_at','?')} | LUFS: {f.get('lufs', '?'):.2f}, Peak: {f.get('peak', '?'):.2f}, [Stage: {f.get('project_stage', '?')}]")
+    else:
+        st.info("No previous projects found.")
 
 if uploaded_file:
     try:
         st.info("🔎 Analysis may take a few seconds. Please wait...")
 
-        email = st.session_state.get('user_email', 'anon')
         ext = Path(uploaded_file.name).suffix.lower()
-
-        # יצירת שם זמני ייחודי למניעת התנגשות קבצים
         tmp = UPLOADS_DIR / f"__tmp_{uuid.uuid4().hex[:8]}{ext}"
         with open(tmp, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
         file_hash = compute_file_hash(tmp)
-        idx = find_record_index(email, file_hash)
-        data = _load_records()
+        idx_rec = find_record(email, file_hash)
 
-        if idx is not None:
-            existing_filename = data[idx].get("filename")
-            if existing_filename:
-                final_path = UPLOADS_DIR / existing_filename
-            else:
-                n = get_next_project_number(email)
-                final_path = build_project_filename(email, n, ext)
-        else:
-            n = get_next_project_number(email)
-            final_path = build_project_filename(email, n, ext)
+        n = get_next_project_number(email)
+        safe_user = safe_filename(email.split("@")[0]) if email else "anon"
+        unique_id = uuid.uuid4().hex[:8]
+        remote_file = f"{safe_user}__project_{n}_{unique_id}{ext}"
 
-        os.replace(tmp, final_path)
+        # העלאה ל-storage (תיקון: בלי upsert ובלי קריאה כ-פונקציה)
+        file_url = upload_to_supabase_storage(tmp, remote_file)
 
-        data_arr, samplerate = _read_audio_to_mono(final_path)
+        # עיבוד אודיו
+        data_arr, samplerate = _read_audio_to_mono(tmp)
         duration = len(data_arr) / samplerate
         eps = 1e-12
         rms = float(np.sqrt(np.mean(data_arr**2)))
@@ -316,6 +307,7 @@ Dominant Frequency: {dominant_freq:.0f}Hz<br>
 Centroid: {centroid:.0f}Hz<br>
 Genre: {genre}<br>
 Project Stage: {project_stage}<br>
+Audio File: <a href="{file_url}" target="_blank">{remote_file}</a>
 </div>
 """
             st.markdown(summary, unsafe_allow_html=True)
@@ -323,7 +315,8 @@ Project Stage: {project_stage}<br>
         record = {
             'email': email,
             'file_hash': file_hash,
-            'filename': final_path.name,
+            'file_url': file_url,
+            'filename': remote_file,
             'duration': duration,
             'lufs': lufs,
             'peak': peak,
@@ -338,7 +331,7 @@ Project Stage: {project_stage}<br>
         save_or_update_record(email, record)
 
         st.session_state["current_file_hash"] = file_hash
-        st.session_state["current_filename"] = final_path.name
+        st.session_state["current_filename"] = remote_file
 
         st.markdown(
             "<div dir='ltr' style='text-align:left; color:#166534; font-size:1.06em; margin-bottom:7px; margin-top:20px;'>Your feedback will improve the system!</div>",
@@ -353,7 +346,7 @@ Project Stage: {project_stage}<br>
                 "Other (please specify)"
             ]
         )
-        if feedback_purpose == "Other (please specify)":
+        if "Other (please specify)" in feedback_purpose:
             feedback_purpose_free = st.text_input("Free text detail:")
         else:
             feedback_purpose_free = ""
@@ -385,10 +378,11 @@ Project Stage: {project_stage}<br>
                 'email': email,
                 'file_hash': st.session_state.get("current_file_hash"),
                 'filename': st.session_state.get("current_filename"),
+                'file_url': file_url,
                 'feedback_purpose': feedback_purpose,
                 'feedback_purpose_free': feedback_purpose_free,
                 'self_rating': self_rating,
-                'feedback_hardest': '/'.join(feedback_hardest),
+                'feedback_hardest': '/'.join(feedback_hardest) if feedback_hardest else "",
                 'feedback_hardest_free': feedback_hardest_free,
                 'reference': reference,
                 'q1': q1,
