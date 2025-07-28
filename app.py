@@ -235,18 +235,6 @@ project_stage = st.selectbox("Project Stage:", [
 ])
 
 # הצג היסטוריה של כל הפרויקטים/פידבקים (כולל לינק קובץ)
-if st.button("Show my full project history"):
-    feedbacks = get_user_feedbacks(email)
-    if feedbacks:
-        st.markdown("#### Your Mix/Project History:")
-        for f in feedbacks:
-            link = f.get('file_url', '')
-            if link:
-                st.markdown(f"- **[{f.get('filename','unknown')}]({link})**: {f.get('created_at','?')} | LUFS: {f.get('lufs', '?'):.2f}, Peak: {f.get('peak', '?'):.2f}, [Stage: {f.get('project_stage', '?')}]")
-            else:
-                st.markdown(f"- **{f.get('filename','unknown')}**: {f.get('created_at','?')} | LUFS: {f.get('lufs', '?'):.2f}, Peak: {f.get('peak', '?'):.2f}, [Stage: {f.get('project_stage', '?')}]")
-    else:
-        st.info("No previous projects found.")
 
 if uploaded_file:
     try:
